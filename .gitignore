@@ -1,0 +1,25 @@
+@'
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+venv/
+.venv/
+
+# Hugging Face model cache - large binaries, never commit
+model_cache/
+.cache/
+
+# Credentials - never commit these
+.env
+*.pem
+.aws/
+
+# Editors and OS
+.vscode/
+.idea/
+.DS_Store
+'@ | Set-Content -Encoding utf8 .\.gitignore
+body.json

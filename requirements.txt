@@ -1,0 +1,9 @@
+# Web layer
+Flask==3.0.3
+gunicorn==22.0.0
+requests==2.32.3
+
+# NLP model. torch is installed from the CPU-only wheel index in the Dockerfile
+# to keep the image around 1 GB instead of roughly 4 GB with bundled CUDA.
+transformers==4.44.2
+torch==2.4.1
