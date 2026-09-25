@@ -1,0 +1,109 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-east-1
+  APP_NAME: sentiment-analysis-service
+  SERVICE_NAME: sentiment-analysis-service
+  # Replace with the cluster name ECS Express Mode created (Step 6)
+  ECS_CLUSTER: your-cluster-name
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Test Dependencies
+        # Only Flask and pytest are needed: tests stub the transformers pipeline
+        run: |
+          pip install --upgrade pip
+          pip install Flask==3.0.3 requests==2.32.3 pytest
+
+      - name: Run Tests
+        run: python -m pytest test_app.py -v
+
+  deploy:
+    name: Build, Push and Deploy
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          df -h /
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and Push Docker Image
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $APP_NAME .
+          docker tag $APP_NAME:latest $REGISTRY/$APP_NAME:latest
+          docker tag $APP_NAME:latest $REGISTRY/$APP_NAME:$IMAGE_TAG
+          docker push $REGISTRY/$APP_NAME:latest
+          docker push $REGISTRY/$APP_NAME:$IMAGE_TAG
+
+      - name: Deploy to Amazon ECS
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$SERVICE_NAME" \
+            --force-new-deployment \
+            --region "$AWS_REGION" \
+            --query "service.{name:serviceName,status:status}"
+
+      - name: Wait for Deployment
+        run: |
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$SERVICE_NAME" \
+            --region "$AWS_REGION"
+          echo "Deployment complete."
+
+      - name: Smoke Test the Deployed Service
+        env:
+          SERVICE_URL: ${{ secrets.SERVICE_URL }}
+        run: |
+          if [ -z "$SERVICE_URL" ]; then
+            echo "SERVICE_URL secret not set - skipping smoke test."
+            exit 0
+          fi
+
+          curl -fsS "$SERVICE_URL/health"
+          curl -fsS -X POST -H "Content-Type: application/json" \
+            -d '{"text": "I love this deployment"}' \
+            "$SERVICE_URL/predict"
